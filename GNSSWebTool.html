@@ -290,10 +290,22 @@
             <button class="btn btn-primary" onclick="requestBluetoothDevice()" style="margin-top: 1rem;">
                 🔵 Connect Arrow Device
             </button>
-            <div style="margin-top: 1rem; padding: 0.75rem; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px; font-size: 0.9rem;">
-                <strong>ℹ️ Arrow 200+ Offset Applied:</strong><br>
-                2.035m total (2.000m pole + 0.025m plate + 0.010m phase center)<br>
-                All elevations shown in NAVD88 feet
+            <div style="margin-top: 1.5rem; padding: 1rem; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <input type="checkbox" id="applyPoleOffset" checked onchange="updateOffsetSettings()" style="width: 20px; height: 20px; cursor: pointer;">
+                    <label for="applyPoleOffset" style="cursor: pointer; font-weight: 600; margin: 0;">Apply Arrow 200+ Pole Offset</label>
+                </div>
+                <div id="offsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px;">
+                    <strong>Total Offset: 2.035m</strong><br>
+                    • Range pole height: 2.000 m<br>
+                    • Mounting plate: 0.025 m<br>
+                    • Phase center offset: 0.010 m<br>
+                    <em>All elevations shown in NAVD88 feet</em>
+                </div>
+                <div id="noOffsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px; display: none;">
+                    <strong>No offset applied</strong><br>
+                    <em>Elevations shown as raw ellipsoidal height in feet</em>
+                </div>
             </div>
         </div>
 
@@ -394,13 +406,30 @@
         // Conversion from ellipsoidal meters to NAVD88 feet
         // Arrow 200+ offset: 2.000m (pole) + 0.025m (plate) + 0.010m (phase center) = 2.035m
         const ARROW_OFFSET = 2.035; // meters
+        
         function convertElevationToFeet(meters) {
-            return (meters + ARROW_OFFSET) * 3.28084;
+            const applyOffset = document.getElementById('applyPoleOffset')?.checked ?? true;
+            const offset = applyOffset ? ARROW_OFFSET : 0;
+            return (meters + offset) * 3.28084;
         }
         
         // Convert meters to feet (for horizontal measurements)
         function metersToFeet(meters) {
             return meters * 3.28084;
+        }
+        
+        // Update offset display when checkbox changes
+        function updateOffsetSettings() {
+            const applyOffset = document.getElementById('applyPoleOffset').checked;
+            document.getElementById('offsetDetails').style.display = applyOffset ? 'block' : 'none';
+            document.getElementById('noOffsetDetails').style.display = applyOffset ? 'none' : 'block';
+            
+            // If currently collecting or have results, warn user
+            if (isCollecting) {
+                alert('Warning: Offset setting changed during collection. Please stop and restart collection for consistent results.');
+            } else if (averagedPoint) {
+                alert('Offset setting changed. Previous results used ' + (averagedPoint.offsetApplied ? 'with' : 'without') + ' offset.');
+            }
         }
 
         // Initialize map
@@ -637,16 +666,18 @@
                 stdDev: stdDev,
                 numReadings: readings.length,
                 readings: [...readings],
-                timestamp: new Date()
+                timestamp: new Date(),
+                offsetApplied: document.getElementById('applyPoleOffset').checked
             };
 
             // Add to collection history
             allCollectedPoints.push(averagedPoint);
 
             // Update UI
+            const offsetLabel = averagedPoint.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
             document.getElementById('avgLat').textContent = avgLat.toFixed(8) + '°';
             document.getElementById('avgLon').textContent = avgLon.toFixed(8) + '°';
-            document.getElementById('avgElev').textContent = avgElevFeet.toFixed(3) + ' ft (NAVD88)';
+            document.getElementById('avgElev').textContent = avgElevFeet.toFixed(3) + ' ft' + offsetLabel;
             document.getElementById('stdDev').textContent = stdDev.toFixed(4) + ' ft';
             document.getElementById('numSamples').textContent = readings.length;
             
@@ -673,11 +704,12 @@
                 })
             }).addTo(map);
 
+            const offsetLabel = averagedPoint.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
             averagedMarker.bindPopup(`
                 <strong>${averagedPoint.name}</strong><br>
                 Lat: ${lat.toFixed(8)}°<br>
                 Lon: ${lon.toFixed(8)}°<br>
-                Elev: ${averagedPoint.altFeet.toFixed(3)} ft<br>
+                Elev: ${averagedPoint.altFeet.toFixed(3)} ft${offsetLabel}<br>
                 Samples: ${averagedPoint.numReadings}<br>
                 Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft
             `).openPopup();
@@ -710,6 +742,7 @@
             const point = allCollectedPoints[index];
             map.setView([point.lat, point.lon], 20);
             
+            const offsetLabel = point.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
             // Show point details
             L.popup()
                 .setLatLng([point.lat, point.lon])
@@ -717,7 +750,7 @@
                     <strong>${point.name}</strong><br>
                     Lat: ${point.lat.toFixed(8)}°<br>
                     Lon: ${point.lon.toFixed(8)}°<br>
-                    Elev: ${point.altFeet.toFixed(3)} ft<br>
+                    Elev: ${point.altFeet.toFixed(3)} ft${offsetLabel}<br>
                     Samples: ${point.numReadings}<br>
                     Std Dev: ${point.stdDev.toFixed(4)} ft
                 `)
@@ -729,14 +762,16 @@
             if (!averagedPoint) return;
 
             const pointName = averagedPoint.name;
-            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Accuracy (ft),Timestamp\n';
+            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
+            let csv = `Point Name,Latitude,Longitude,Elevation (ft ${offsetLabel}),Accuracy (ft),Timestamp\n`;
             
             // Add summary row
-            csv += `${pointName} (Average),${averagedPoint.lat.toFixed(8)},${averagedPoint.lon.toFixed(8)},${averagedPoint.altFeet.toFixed(3)},${averagedPoint.stdDev.toFixed(4)},${averagedPoint.timestamp.toISOString()}\n\n`;
+            csv += `${pointName} (Average),${averagedPoint.lat.toFixed(8)},${averagedPoint.lon.toFixed(8)},${averagedPoint.altFeet.toFixed(3)},${averagedPoint.stdDev.toFixed(4)},${averagedPoint.timestamp.toISOString()}\n`;
+            csv += `Offset Applied: ${averagedPoint.offsetApplied ? 'Yes (2.035m)' : 'No'}\n\n`;
             
             // Add all readings
             csv += 'Individual Readings:\n';
-            csv += 'Reading #,Latitude,Longitude,Elevation (ft),Accuracy (ft),Timestamp\n';
+            csv += `Reading #,Latitude,Longitude,Elevation (ft),Accuracy (ft),Timestamp\n`;
             readings.forEach((r, i) => {
                 csv += `${i+1},${r.lat.toFixed(8)},${r.lon.toFixed(8)},${r.altFeet.toFixed(3)},${metersToFeet(r.accuracy).toFixed(2)},${r.timestamp.toISOString()}\n`;
             });
@@ -747,6 +782,7 @@
         function exportGeoJSON() {
             if (!averagedPoint) return;
 
+            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
             const geojson = {
                 type: 'FeatureCollection',
                 features: [
@@ -758,10 +794,13 @@
                         },
                         properties: {
                             name: averagedPoint.name,
-                            elevation_ft_navd88: averagedPoint.altFeet.toFixed(3),
+                            elevation_ft: averagedPoint.altFeet.toFixed(3),
+                            elevation_datum: offsetLabel,
                             elevation_m: (averagedPoint.altFeet * 0.3048).toFixed(3),
                             std_deviation_ft: averagedPoint.stdDev.toFixed(4),
                             std_deviation_m: (averagedPoint.stdDev * 0.3048).toFixed(4),
+                            offset_applied: averagedPoint.offsetApplied,
+                            offset_value_m: averagedPoint.offsetApplied ? '2.035' : '0',
                             num_readings: averagedPoint.numReadings,
                             timestamp: averagedPoint.timestamp.toISOString()
                         }
@@ -783,7 +822,8 @@
     <Placemark>
       <name>${averagedPoint.name}</name>
       <description>
-        Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88)
+        Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal'})
+        ${averagedPoint.offsetApplied ? 'Offset Applied: 2.035m' : 'No Offset Applied'}
         Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft
         Readings: ${averagedPoint.numReadings}
         Collected: ${averagedPoint.timestamp.toLocaleString()}
@@ -812,7 +852,7 @@
     <ele>${(averagedPoint.altFeet * 0.3048).toFixed(3)}</ele>
     <time>${averagedPoint.timestamp.toISOString()}</time>
     <name>${averagedPoint.name}</name>
-    <desc>Elev: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88), Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft, Readings: ${averagedPoint.numReadings}</desc>
+    <desc>Elev: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal'}), ${averagedPoint.offsetApplied ? 'Offset: 2.035m' : 'No Offset'}, Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft, Readings: ${averagedPoint.numReadings}</desc>
   </wpt>
 </gpx>`;
 
@@ -822,10 +862,12 @@
         function copyCoordinates() {
             if (!averagedPoint) return;
 
+            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
+            const offsetNote = averagedPoint.offsetApplied ? '\nOffset Applied: 2.035m (pole + plate + phase center)' : '\nNo Offset Applied';
             const text = `${averagedPoint.name}
 Latitude: ${averagedPoint.lat.toFixed(8)}°
 Longitude: ${averagedPoint.lon.toFixed(8)}°
-Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88)
+Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${offsetLabel})${offsetNote}
 Standard Deviation: ${averagedPoint.stdDev.toFixed(4)} ft
 Readings: ${averagedPoint.numReadings}
 Collected: ${averagedPoint.timestamp.toLocaleString()}`;
@@ -841,10 +883,12 @@ Collected: ${averagedPoint.timestamp.toLocaleString()}`;
         function exportAllPoints() {
             if (allCollectedPoints.length === 0) return;
 
-            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Std Deviation (ft),Num Readings,Timestamp\n';
+            let csv = 'Point Name,Latitude,Longitude,Elevation (ft),Datum,Offset Applied,Std Deviation (ft),Num Readings,Timestamp\n';
             
             allCollectedPoints.forEach(point => {
-                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(3)},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
+                const datum = point.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
+                const offset = point.offsetApplied ? 'Yes (2.035m)' : 'No';
+                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(3)},${datum},${offset},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
             });
 
             downloadFile(csv, 'All_RTK_Points.csv', 'text/csv');
