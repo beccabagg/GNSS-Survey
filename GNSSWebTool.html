@@ -290,21 +290,44 @@
             <button class="btn btn-primary" onclick="requestBluetoothDevice()" style="margin-top: 1rem;">
                 🔵 Connect Arrow Device
             </button>
-            <div style="margin-top: 1.5rem; padding: 1rem; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">
+            
+            <!-- Pole Offset Setting -->
+            <div style="margin-top: 1.5rem; padding: 1rem; background: #fff3cd; border-left: 4px solid #ffc107; border-radius: 4px;">
                 <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
                     <input type="checkbox" id="applyPoleOffset" checked onchange="updateOffsetSettings()" style="width: 20px; height: 20px; cursor: pointer;">
-                    <label for="applyPoleOffset" style="cursor: pointer; font-weight: 600; margin: 0;">Apply Arrow 200+ Pole Offset</label>
+                    <label for="applyPoleOffset" style="cursor: pointer; font-weight: 600; margin: 0;">Subtract Arrow Pole Offset (2.035m)</label>
                 </div>
-                <div id="offsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px;">
-                    <strong>Total Offset: 2.035m</strong><br>
+                <div id="poleOffsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px;">
+                    <strong>GPS antenna is ABOVE ground point:</strong><br>
                     • Range pole height: 2.000 m<br>
                     • Mounting plate: 0.025 m<br>
                     • Phase center offset: 0.010 m<br>
-                    <em>All elevations shown in NAVD88 feet</em>
+                    • <strong>Total: 2.035m (subtracted from GPS reading)</strong>
                 </div>
-                <div id="noOffsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px; display: none;">
-                    <strong>No offset applied</strong><br>
-                    <em>Elevations shown as raw ellipsoidal height in feet</em>
+                <div id="noPoleOffsetDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px; display: none;">
+                    <strong>No pole offset applied</strong><br>
+                    <em>Use this for handheld GPS or direct ground measurements</em>
+                </div>
+            </div>
+            
+            <!-- Geoid Separation Setting -->
+            <div style="margin-top: 1rem; padding: 1rem; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px;">
+                <div style="display: flex; align-items: center; gap: 0.75rem; margin-bottom: 0.75rem;">
+                    <input type="checkbox" id="applyGeoidSeparation" checked onchange="updateGeoidSettings()" style="width: 20px; height: 20px; cursor: pointer;">
+                    <label for="applyGeoidSeparation" style="cursor: pointer; font-weight: 600; margin: 0;">Apply Geoid Separation (Ellipsoid → NAVD88)</label>
+                </div>
+                <div id="geoidDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px;">
+                    <div style="margin-bottom: 0.5rem;">
+                        <label for="geoidValue" style="font-weight: 600;">Geoid Separation (meters):</label>
+                        <input type="number" id="geoidValue" value="-32.0" step="0.1" style="width: 100px; padding: 0.25rem; margin-left: 0.5rem; border: 1px solid #ccc; border-radius: 4px;">
+                    </div>
+                    <strong>For Monterey, CA: -32.0m</strong> (geoid below ellipsoid)<br>
+                    <em>Get your value from: <a href="https://www.ngs.noaa.gov/GEOID/GEOID18/computation.html" target="_blank">NGS Geoid Calculator</a></em><br>
+                    <small>Negative = geoid below ellipsoid (most of US West Coast)</small>
+                </div>
+                <div id="noGeoidDetails" style="font-size: 0.9rem; color: #555; padding-left: 28px; display: none;">
+                    <strong>No geoid correction applied</strong><br>
+                    <em>Elevations will be ellipsoidal heights (not NAVD88)</em>
                 </div>
             </div>
         </div>
@@ -403,14 +426,37 @@
         let bluetoothDevice = null;
         let gpsCharacteristic = null;
 
-        // Conversion from ellipsoidal meters to NAVD88 feet
-        // Arrow 200+ offset: 2.000m (pole) + 0.025m (plate) + 0.010m (phase center) = 2.035m
-        const ARROW_OFFSET = 2.035; // meters
+        // Elevation conversion constants
+        const ARROW_POLE_OFFSET = 2.035; // meters (pole + plate + phase center)
         
-        function convertElevationToFeet(meters) {
-            const applyOffset = document.getElementById('applyPoleOffset')?.checked ?? true;
-            const offset = applyOffset ? ARROW_OFFSET : 0;
-            return (meters + offset) * 3.28084;
+        // Geoid separation for your location
+        // Get it from: https://www.ngs.noaa.gov/GEOID/GEOID18/computation.html
+        // For Monterey, CA: approximately -32m (geoid BELOW ellipsoid)
+        // Negative value means geoid is below ellipsoid
+        const DEFAULT_GEOID_SEPARATION = -32.0; // meters - for Monterey, CA
+        
+        function convertElevationToFeet(ellipsoidalHeightMeters) {
+            const applyPoleOffset = document.getElementById('applyPoleOffset')?.checked ?? true;
+            const applyGeoidSeparation = document.getElementById('applyGeoidSeparation')?.checked ?? true;
+            
+            let heightMeters = ellipsoidalHeightMeters;
+            
+            // Step 1: SUBTRACT pole offset if using Arrow on pole
+            // The GPS antenna is ABOVE the ground point by 2.035m
+            if (applyPoleOffset) {
+                heightMeters -= ARROW_POLE_OFFSET;
+            }
+            
+            // Step 2: Convert ellipsoidal to orthometric (NAVD88) height
+            // Formula: Orthometric = Ellipsoidal - Geoid_Separation
+            // For Monterey: geoid_sep = -32m, so: NAVD88 = Ellipsoidal - (-32) = Ellipsoidal + 32
+            if (applyGeoidSeparation) {
+                const geoidValue = parseFloat(document.getElementById('geoidValue')?.value || DEFAULT_GEOID_SEPARATION);
+                heightMeters -= geoidValue;
+            }
+            
+            // Step 3: Convert to feet
+            return heightMeters * 3.28084;
         }
         
         // Convert meters to feet (for horizontal measurements)
@@ -418,17 +464,32 @@
             return meters * 3.28084;
         }
         
-        // Update offset display when checkbox changes
+        // Update pole offset display when checkbox changes
         function updateOffsetSettings() {
             const applyOffset = document.getElementById('applyPoleOffset').checked;
-            document.getElementById('offsetDetails').style.display = applyOffset ? 'block' : 'none';
-            document.getElementById('noOffsetDetails').style.display = applyOffset ? 'none' : 'block';
+            document.getElementById('poleOffsetDetails').style.display = applyOffset ? 'block' : 'none';
+            document.getElementById('noPoleOffsetDetails').style.display = applyOffset ? 'none' : 'block';
             
-            // If currently collecting or have results, warn user
+            warnIfSettingsChanged();
+        }
+        
+        // Update geoid separation display when checkbox changes
+        function updateGeoidSettings() {
+            const applyGeoid = document.getElementById('applyGeoidSeparation').checked;
+            document.getElementById('geoidDetails').style.display = applyGeoid ? 'block' : 'none';
+            document.getElementById('noGeoidDetails').style.display = applyGeoid ? 'none' : 'block';
+            
+            warnIfSettingsChanged();
+        }
+        
+        // Warn user if settings changed during or after collection
+        function warnIfSettingsChanged() {
             if (isCollecting) {
-                alert('Warning: Offset setting changed during collection. Please stop and restart collection for consistent results.');
+                alert('Warning: Settings changed during collection. Please stop and restart collection for consistent results.');
             } else if (averagedPoint) {
-                alert('Offset setting changed. Previous results used ' + (averagedPoint.offsetApplied ? 'with' : 'without') + ' offset.');
+                const poleMsg = averagedPoint.poleOffsetApplied ? 'with' : 'without';
+                const geoidMsg = averagedPoint.geoidSeparationApplied ? 'with' : 'without';
+                alert(`Settings changed. Previous results used ${poleMsg} pole offset and ${geoidMsg} geoid correction.`);
             }
         }
 
@@ -667,14 +728,23 @@
                 numReadings: readings.length,
                 readings: [...readings],
                 timestamp: new Date(),
-                offsetApplied: document.getElementById('applyPoleOffset').checked
+                poleOffsetApplied: document.getElementById('applyPoleOffset').checked,
+                geoidSeparationApplied: document.getElementById('applyGeoidSeparation').checked,
+                geoidValue: parseFloat(document.getElementById('geoidValue')?.value || DEFAULT_GEOID_SEPARATION)
             };
 
             // Add to collection history
             allCollectedPoints.push(averagedPoint);
 
             // Update UI
-            const offsetLabel = averagedPoint.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
+            const getDatumLabel = () => {
+                if (averagedPoint.geoidSeparationApplied) {
+                    return ' (NAVD88)';
+                } else {
+                    return ' (Ellipsoidal)';
+                }
+            };
+            const offsetLabel = getDatumLabel();
             document.getElementById('avgLat').textContent = avgLat.toFixed(8) + '°';
             document.getElementById('avgLon').textContent = avgLon.toFixed(8) + '°';
             document.getElementById('avgElev').textContent = avgElevFeet.toFixed(3) + ' ft' + offsetLabel;
@@ -704,7 +774,7 @@
                 })
             }).addTo(map);
 
-            const offsetLabel = averagedPoint.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
+            const offsetLabel = averagedPoint.geoidSeparationApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
             averagedMarker.bindPopup(`
                 <strong>${averagedPoint.name}</strong><br>
                 Lat: ${lat.toFixed(8)}°<br>
@@ -742,7 +812,7 @@
             const point = allCollectedPoints[index];
             map.setView([point.lat, point.lon], 20);
             
-            const offsetLabel = point.offsetApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
+            const offsetLabel = point.geoidSeparationApplied ? ' (NAVD88)' : ' (Ellipsoidal)';
             // Show point details
             L.popup()
                 .setLatLng([point.lat, point.lon])
@@ -762,12 +832,13 @@
             if (!averagedPoint) return;
 
             const pointName = averagedPoint.name;
-            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
+            const offsetLabel = averagedPoint.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal';
             let csv = `Point Name,Latitude,Longitude,Elevation (ft ${offsetLabel}),Accuracy (ft),Timestamp\n`;
             
             // Add summary row
             csv += `${pointName} (Average),${averagedPoint.lat.toFixed(8)},${averagedPoint.lon.toFixed(8)},${averagedPoint.altFeet.toFixed(3)},${averagedPoint.stdDev.toFixed(4)},${averagedPoint.timestamp.toISOString()}\n`;
-            csv += `Offset Applied: ${averagedPoint.offsetApplied ? 'Yes (2.035m)' : 'No'}\n\n`;
+            csv += `Pole Offset Applied: ${averagedPoint.poleOffsetApplied ? 'Yes (2.035m subtracted)' : 'No'}\n`;
+            csv += `Geoid Separation Applied: ${averagedPoint.geoidSeparationApplied ? 'Yes (' + averagedPoint.geoidValue.toFixed(1) + 'm)' : 'No'}\n\n`;
             
             // Add all readings
             csv += 'Individual Readings:\n';
@@ -782,7 +853,7 @@
         function exportGeoJSON() {
             if (!averagedPoint) return;
 
-            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
+            const offsetLabel = averagedPoint.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal';
             const geojson = {
                 type: 'FeatureCollection',
                 features: [
@@ -799,8 +870,10 @@
                             elevation_m: (averagedPoint.altFeet * 0.3048).toFixed(3),
                             std_deviation_ft: averagedPoint.stdDev.toFixed(4),
                             std_deviation_m: (averagedPoint.stdDev * 0.3048).toFixed(4),
-                            offset_applied: averagedPoint.offsetApplied,
-                            offset_value_m: averagedPoint.offsetApplied ? '2.035' : '0',
+                            pole_offset_applied: averagedPoint.poleOffsetApplied,
+                            pole_offset_value_m: averagedPoint.poleOffsetApplied ? '2.035' : '0',
+                            geoid_separation_applied: averagedPoint.geoidSeparationApplied,
+                            geoid_separation_value_m: averagedPoint.geoidSeparationApplied ? averagedPoint.geoidValue.toFixed(1) : '0',
                             num_readings: averagedPoint.numReadings,
                             timestamp: averagedPoint.timestamp.toISOString()
                         }
@@ -822,8 +895,9 @@
     <Placemark>
       <name>${averagedPoint.name}</name>
       <description>
-        Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal'})
-        ${averagedPoint.offsetApplied ? 'Offset Applied: 2.035m' : 'No Offset Applied'}
+        Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal'})
+        Pole Offset: ${averagedPoint.poleOffsetApplied ? '2.035m subtracted' : 'Not applied'}
+        Geoid Separation: ${averagedPoint.geoidSeparationApplied ? averagedPoint.geoidValue.toFixed(1) + 'm applied' : 'Not applied'}
         Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft
         Readings: ${averagedPoint.numReadings}
         Collected: ${averagedPoint.timestamp.toLocaleString()}
@@ -852,7 +926,7 @@
     <ele>${(averagedPoint.altFeet * 0.3048).toFixed(3)}</ele>
     <time>${averagedPoint.timestamp.toISOString()}</time>
     <name>${averagedPoint.name}</name>
-    <desc>Elev: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal'}), ${averagedPoint.offsetApplied ? 'Offset: 2.035m' : 'No Offset'}, Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft, Readings: ${averagedPoint.numReadings}</desc>
+    <desc>Elev: ${averagedPoint.altFeet.toFixed(3)} ft (${averagedPoint.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal'}), Pole: ${averagedPoint.poleOffsetApplied ? '2.035m' : 'None'}, Geoid: ${averagedPoint.geoidSeparationApplied ? averagedPoint.geoidValue.toFixed(1) + 'm' : 'None'}, Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft, Readings: ${averagedPoint.numReadings}</desc>
   </wpt>
 </gpx>`;
 
@@ -862,12 +936,13 @@
         function copyCoordinates() {
             if (!averagedPoint) return;
 
-            const offsetLabel = averagedPoint.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
-            const offsetNote = averagedPoint.offsetApplied ? '\nOffset Applied: 2.035m (pole + plate + phase center)' : '\nNo Offset Applied';
+            const offsetLabel = averagedPoint.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal';
+            const poleNote = averagedPoint.poleOffsetApplied ? '\nPole Offset: 2.035m subtracted (pole + plate + phase center)' : '\nPole Offset: Not applied';
+            const geoidNote = averagedPoint.geoidSeparationApplied ? '\nGeoid Separation: ' + averagedPoint.geoidValue.toFixed(1) + 'm applied' : '\nGeoid Separation: Not applied';
             const text = `${averagedPoint.name}
 Latitude: ${averagedPoint.lat.toFixed(8)}°
 Longitude: ${averagedPoint.lon.toFixed(8)}°
-Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${offsetLabel})${offsetNote}
+Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (${offsetLabel})${poleNote}${geoidNote}
 Standard Deviation: ${averagedPoint.stdDev.toFixed(4)} ft
 Readings: ${averagedPoint.numReadings}
 Collected: ${averagedPoint.timestamp.toLocaleString()}`;
@@ -883,12 +958,13 @@ Collected: ${averagedPoint.timestamp.toLocaleString()}`;
         function exportAllPoints() {
             if (allCollectedPoints.length === 0) return;
 
-            let csv = 'Point Name,Latitude,Longitude,Elevation (ft),Datum,Offset Applied,Std Deviation (ft),Num Readings,Timestamp\n';
+            let csv = 'Point Name,Latitude,Longitude,Elevation (ft),Datum,Pole Offset,Geoid Sep (m),Std Deviation (ft),Num Readings,Timestamp\n';
             
             allCollectedPoints.forEach(point => {
-                const datum = point.offsetApplied ? 'NAVD88' : 'Ellipsoidal';
-                const offset = point.offsetApplied ? 'Yes (2.035m)' : 'No';
-                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(3)},${datum},${offset},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
+                const datum = point.geoidSeparationApplied ? 'NAVD88' : 'Ellipsoidal';
+                const poleOffset = point.poleOffsetApplied ? 'Yes' : 'No';
+                const geoidValue = point.geoidSeparationApplied ? point.geoidValue.toFixed(1) : 'N/A';
+                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(3)},${datum},${poleOffset},${geoidValue},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
             });
 
             downloadFile(csv, 'All_RTK_Points.csv', 'text/csv');
