@@ -290,6 +290,11 @@
             <button class="btn btn-primary" onclick="requestBluetoothDevice()" style="margin-top: 1rem;">
                 🔵 Connect Arrow Device
             </button>
+            <div style="margin-top: 1rem; padding: 0.75rem; background: #e3f2fd; border-left: 4px solid #2196f3; border-radius: 4px; font-size: 0.9rem;">
+                <strong>ℹ️ Arrow 200+ Offset Applied:</strong><br>
+                2.035m total (2.000m pole + 0.025m plate + 0.010m phase center)<br>
+                All elevations shown in NAVD88 feet
+            </div>
         </div>
 
         <!-- Point Collection -->
@@ -386,10 +391,16 @@
         let bluetoothDevice = null;
         let gpsCharacteristic = null;
 
-        // Conversion from ellipsoidal meters to NAVD88 feet (adjust geoid separation as needed)
-        const GEOID_SEPARATION = 2.035; // meters - adjust for your location
+        // Conversion from ellipsoidal meters to NAVD88 feet
+        // Arrow 200+ offset: 2.000m (pole) + 0.025m (plate) + 0.010m (phase center) = 2.035m
+        const ARROW_OFFSET = 2.035; // meters
         function convertElevationToFeet(meters) {
-            return (meters - GEOID_SEPARATION) * 3.28084;
+            return (meters + ARROW_OFFSET) * 3.28084;
+        }
+        
+        // Convert meters to feet (for horizontal measurements)
+        function metersToFeet(meters) {
+            return meters * 3.28084;
         }
 
         // Initialize map
@@ -534,7 +545,7 @@
             document.getElementById('pointCount').textContent = `${readings.length} / ${targetPoints}`;
             document.getElementById('progressBar').style.width = `${progress}%`;
             document.getElementById('progressBar').textContent = `${Math.round(progress)}%`;
-            document.getElementById('currentAccuracy').textContent = `±${accuracy.toFixed(2)}m`;
+            document.getElementById('currentAccuracy').textContent = `±${metersToFeet(accuracy).toFixed(2)} ft`;
 
             // Update map
             showCurrentPoint(lat, lon);
@@ -607,15 +618,15 @@
             const avgLon = sumLon / readings.length;
             const avgElevFeet = sumAltFeet / readings.length;
 
-            // Calculate standard deviation
+            // Calculate standard deviation (in feet)
             const variance = readings.reduce((sum, r) => {
-                const dLat = (r.lat - avgLat) * 111320; // meters
-                const dLon = (r.lon - avgLon) * 111320 * Math.cos(avgLat * Math.PI / 180); // meters
-                const dAlt = (r.altFeet - avgElevFeet) * 0.3048; // feet to meters
+                const dLat = (r.lat - avgLat) * 111320 * 3.28084; // degrees to feet
+                const dLon = (r.lon - avgLon) * 111320 * 3.28084 * Math.cos(avgLat * Math.PI / 180); // degrees to feet
+                const dAlt = r.altFeet - avgElevFeet; // already in feet
                 return sum + (dLat * dLat + dLon * dLon + dAlt * dAlt);
             }, 0) / readings.length;
 
-            const stdDev = Math.sqrt(variance);
+            const stdDev = Math.sqrt(variance); // result in feet
 
             // Store averaged point
             averagedPoint = {
@@ -635,8 +646,8 @@
             // Update UI
             document.getElementById('avgLat').textContent = avgLat.toFixed(8) + '°';
             document.getElementById('avgLon').textContent = avgLon.toFixed(8) + '°';
-            document.getElementById('avgElev').textContent = avgElevFeet.toFixed(2) + ' ft (NAVD88)';
-            document.getElementById('stdDev').textContent = stdDev.toFixed(4) + ' m';
+            document.getElementById('avgElev').textContent = avgElevFeet.toFixed(3) + ' ft (NAVD88)';
+            document.getElementById('stdDev').textContent = stdDev.toFixed(4) + ' ft';
             document.getElementById('numSamples').textContent = readings.length;
             
             document.getElementById('resultsContainer').classList.remove('hidden');
@@ -666,9 +677,9 @@
                 <strong>${averagedPoint.name}</strong><br>
                 Lat: ${lat.toFixed(8)}°<br>
                 Lon: ${lon.toFixed(8)}°<br>
-                Elev: ${averagedPoint.altFeet.toFixed(2)} ft<br>
+                Elev: ${averagedPoint.altFeet.toFixed(3)} ft<br>
                 Samples: ${averagedPoint.numReadings}<br>
-                Std Dev: ${averagedPoint.stdDev.toFixed(4)} m
+                Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft
             `).openPopup();
 
             map.setView([lat, lon], 20);
@@ -706,9 +717,9 @@
                     <strong>${point.name}</strong><br>
                     Lat: ${point.lat.toFixed(8)}°<br>
                     Lon: ${point.lon.toFixed(8)}°<br>
-                    Elev: ${point.altFeet.toFixed(2)} ft<br>
+                    Elev: ${point.altFeet.toFixed(3)} ft<br>
                     Samples: ${point.numReadings}<br>
-                    Std Dev: ${point.stdDev.toFixed(4)} m
+                    Std Dev: ${point.stdDev.toFixed(4)} ft
                 `)
                 .openOn(map);
         }
@@ -718,16 +729,16 @@
             if (!averagedPoint) return;
 
             const pointName = averagedPoint.name;
-            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Accuracy (m),Timestamp\n';
+            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Accuracy (ft),Timestamp\n';
             
             // Add summary row
-            csv += `${pointName} (Average),${averagedPoint.lat.toFixed(8)},${averagedPoint.lon.toFixed(8)},${averagedPoint.altFeet.toFixed(2)},${averagedPoint.stdDev.toFixed(4)},${averagedPoint.timestamp.toISOString()}\n\n`;
+            csv += `${pointName} (Average),${averagedPoint.lat.toFixed(8)},${averagedPoint.lon.toFixed(8)},${averagedPoint.altFeet.toFixed(3)},${averagedPoint.stdDev.toFixed(4)},${averagedPoint.timestamp.toISOString()}\n\n`;
             
             // Add all readings
             csv += 'Individual Readings:\n';
-            csv += 'Reading #,Latitude,Longitude,Elevation (ft),Accuracy (m),Timestamp\n';
+            csv += 'Reading #,Latitude,Longitude,Elevation (ft),Accuracy (ft),Timestamp\n';
             readings.forEach((r, i) => {
-                csv += `${i+1},${r.lat.toFixed(8)},${r.lon.toFixed(8)},${r.altFeet.toFixed(2)},${r.accuracy.toFixed(2)},${r.timestamp.toISOString()}\n`;
+                csv += `${i+1},${r.lat.toFixed(8)},${r.lon.toFixed(8)},${r.altFeet.toFixed(3)},${metersToFeet(r.accuracy).toFixed(2)},${r.timestamp.toISOString()}\n`;
             });
 
             downloadFile(csv, `${pointName}_RTK_Data.csv`, 'text/csv');
@@ -747,9 +758,10 @@
                         },
                         properties: {
                             name: averagedPoint.name,
-                            elevation_ft: averagedPoint.altFeet.toFixed(2),
-                            elevation_m: (averagedPoint.altFeet * 0.3048).toFixed(2),
-                            std_deviation_m: averagedPoint.stdDev.toFixed(4),
+                            elevation_ft_navd88: averagedPoint.altFeet.toFixed(3),
+                            elevation_m: (averagedPoint.altFeet * 0.3048).toFixed(3),
+                            std_deviation_ft: averagedPoint.stdDev.toFixed(4),
+                            std_deviation_m: (averagedPoint.stdDev * 0.3048).toFixed(4),
                             num_readings: averagedPoint.numReadings,
                             timestamp: averagedPoint.timestamp.toISOString()
                         }
@@ -771,13 +783,13 @@
     <Placemark>
       <name>${averagedPoint.name}</name>
       <description>
-        Elevation: ${averagedPoint.altFeet.toFixed(2)} ft (NAVD88)
-        Std Dev: ${averagedPoint.stdDev.toFixed(4)} m
+        Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88)
+        Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft
         Readings: ${averagedPoint.numReadings}
         Collected: ${averagedPoint.timestamp.toLocaleString()}
       </description>
       <Point>
-        <coordinates>${averagedPoint.lon.toFixed(8)},${averagedPoint.lat.toFixed(8)},${(averagedPoint.altFeet * 0.3048).toFixed(2)}</coordinates>
+        <coordinates>${averagedPoint.lon.toFixed(8)},${averagedPoint.lat.toFixed(8)},${(averagedPoint.altFeet * 0.3048).toFixed(3)}</coordinates>
       </Point>
     </Placemark>
   </Document>
@@ -797,10 +809,10 @@
     <time>${averagedPoint.timestamp.toISOString()}</time>
   </metadata>
   <wpt lat="${averagedPoint.lat.toFixed(8)}" lon="${averagedPoint.lon.toFixed(8)}">
-    <ele>${(averagedPoint.altFeet * 0.3048).toFixed(2)}</ele>
+    <ele>${(averagedPoint.altFeet * 0.3048).toFixed(3)}</ele>
     <time>${averagedPoint.timestamp.toISOString()}</time>
     <name>${averagedPoint.name}</name>
-    <desc>Std Dev: ${averagedPoint.stdDev.toFixed(4)} m, Readings: ${averagedPoint.numReadings}</desc>
+    <desc>Elev: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88), Std Dev: ${averagedPoint.stdDev.toFixed(4)} ft, Readings: ${averagedPoint.numReadings}</desc>
   </wpt>
 </gpx>`;
 
@@ -813,8 +825,8 @@
             const text = `${averagedPoint.name}
 Latitude: ${averagedPoint.lat.toFixed(8)}°
 Longitude: ${averagedPoint.lon.toFixed(8)}°
-Elevation: ${averagedPoint.altFeet.toFixed(2)} ft (NAVD88)
-Standard Deviation: ${averagedPoint.stdDev.toFixed(4)} m
+Elevation: ${averagedPoint.altFeet.toFixed(3)} ft (NAVD88)
+Standard Deviation: ${averagedPoint.stdDev.toFixed(4)} ft
 Readings: ${averagedPoint.numReadings}
 Collected: ${averagedPoint.timestamp.toLocaleString()}`;
 
@@ -829,10 +841,10 @@ Collected: ${averagedPoint.timestamp.toLocaleString()}`;
         function exportAllPoints() {
             if (allCollectedPoints.length === 0) return;
 
-            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Std Deviation (m),Num Readings,Timestamp\n';
+            let csv = 'Point Name,Latitude,Longitude,Elevation (ft NAVD88),Std Deviation (ft),Num Readings,Timestamp\n';
             
             allCollectedPoints.forEach(point => {
-                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(2)},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
+                csv += `${point.name},${point.lat.toFixed(8)},${point.lon.toFixed(8)},${point.altFeet.toFixed(3)},${point.stdDev.toFixed(4)},${point.numReadings},${point.timestamp.toISOString()}\n`;
             });
 
             downloadFile(csv, 'All_RTK_Points.csv', 'text/csv');
